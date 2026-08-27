@@ -1,0 +1,8 @@
+# Local secrets and editor/system files
+.env
+.env.*
+!.env.example
+.DS_Store
+.vscode/
+node_modules/
+supabase/.temp/
