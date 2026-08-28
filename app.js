@@ -155,20 +155,20 @@ function renderRoadmaps() {
 function renderBudget() {
   const expenses = transactions.filter(t => t.type === 'expense');
   const income = transactions.filter(t => t.type === 'income');
-  const spent = expenses.reduce((sum, t) => sum + Number(t.amount), 0);
+  const personalExpenses = expenses.filter(t => t.category !== 'Money sent home');
+  const spent = personalExpenses.reduce((sum, t) => sum + Number(t.amount), 0);
   const earned = income.reduce((sum, t) => sum + Number(t.amount), 0);
   const sentHome = expenses.filter(t => t.category === 'Money sent home').reduce((sum, t) => sum + Number(t.amount), 0);
-  const personalSpending = expenses.filter(t => t.category !== 'Money sent home').reduce((sum, t) => sum + Number(t.amount), 0);
-  const available = monthlyBudget - sendHomeBudget - personalSpending;
+  const available = monthlyBudget - sendHomeBudget - spent;
   document.querySelector('#availableAmount').textContent = money(available);
-  document.querySelector('#availableNote').textContent = monthlyBudget ? `${money(personalSpending)} personal spending + ${money(sendHomeBudget)} reserved` : 'Set a monthly budget to begin';
+  document.querySelector('#availableNote').textContent = monthlyBudget ? `${money(spent)} personal spending + ${money(sendHomeBudget)} reserved` : 'Set a monthly budget to begin';
   document.querySelector('#sendHomeAmount').textContent = money(sendHomeBudget);
   document.querySelector('#sendHomeNote').textContent = sendHomeBudget ? `${money(sentHome)} recorded as sent · ${money(Math.max(0, sendHomeBudget - sentHome))} remaining` : 'Dedicated monthly allocation';
   document.querySelector('#spentAmount').textContent = money(spent);
-  document.querySelector('#spentNote').textContent = expenses.length ? `${expenses.length} expense${expenses.length === 1 ? '' : 's'} this month` : 'No expenses recorded';
+  document.querySelector('#spentNote').textContent = personalExpenses.length ? `${personalExpenses.length} personal expense${personalExpenses.length === 1 ? '' : 's'} this month` : 'No personal expenses recorded';
   document.querySelector('#incomeAmount').textContent = money(earned);
   document.querySelector('#transactionList').innerHTML = transactions.length ? transactions.map(t => `<div class="transaction"><div class="transaction-icon ${t.type}">${t.type === 'income' ? '↗' : '↘'}</div><div class="transaction-detail"><b>${escapeHtml(t.title)}</b><span>${escapeHtml(t.category)} · ${new Intl.DateTimeFormat('en-US', { month:'short', day:'numeric' }).format(new Date(`${t.transaction_date}T12:00:00`))}</span></div><strong class="${t.type}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</strong><button class="delete transaction-delete" data-transaction-delete="${t.id}" aria-label="Delete ${escapeHtml(t.title)}">×</button></div>`).join('') : '<div class="empty-state">No money records this month. Add income or an expense to begin.</div>';
-  const categories = expenses.reduce((result, t) => { result[t.category] = (result[t.category] || 0) + Number(t.amount); return result; }, {});
+  const categories = personalExpenses.reduce((result, t) => { result[t.category] = (result[t.category] || 0) + Number(t.amount); return result; }, {});
   const plans = Object.fromEntries(budgetPlans.map(plan => [plan.category, Number(plan.amount)]));
   const names = [...new Set([...Object.keys(categories), ...Object.keys(plans)])];
   const ordered = names.map(name => ({ name, spent: categories[name] || 0, limit: plans[name] || 0 })).sort((a, b) => (b.spent / (b.limit || 1)) - (a.spent / (a.limit || 1)));
