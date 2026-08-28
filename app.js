@@ -158,9 +158,10 @@ function renderBudget() {
   const spent = expenses.reduce((sum, t) => sum + Number(t.amount), 0);
   const earned = income.reduce((sum, t) => sum + Number(t.amount), 0);
   const sentHome = expenses.filter(t => t.category === 'Money sent home').reduce((sum, t) => sum + Number(t.amount), 0);
-  const available = monthlyBudget - sendHomeBudget - spent;
+  const personalSpending = expenses.filter(t => t.category !== 'Money sent home').reduce((sum, t) => sum + Number(t.amount), 0);
+  const available = monthlyBudget - sendHomeBudget - personalSpending;
   document.querySelector('#availableAmount').textContent = money(available);
-  document.querySelector('#availableNote').textContent = monthlyBudget ? `${money(spent)} spent + ${money(sendHomeBudget)} reserved` : 'Set a monthly budget to begin';
+  document.querySelector('#availableNote').textContent = monthlyBudget ? `${money(personalSpending)} personal spending + ${money(sendHomeBudget)} reserved` : 'Set a monthly budget to begin';
   document.querySelector('#sendHomeAmount').textContent = money(sendHomeBudget);
   document.querySelector('#sendHomeNote').textContent = sendHomeBudget ? `${money(sentHome)} recorded as sent · ${money(Math.max(0, sendHomeBudget - sentHome))} remaining` : 'Dedicated monthly allocation';
   document.querySelector('#spentAmount').textContent = money(spent);
