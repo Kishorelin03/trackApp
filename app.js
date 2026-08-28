@@ -167,6 +167,9 @@ function renderBudget() {
   document.querySelector('#spentAmount').textContent = money(spent);
   document.querySelector('#spentNote').textContent = personalExpenses.length ? `${personalExpenses.length} personal expense${personalExpenses.length === 1 ? '' : 's'} this month` : 'No personal expenses recorded';
   document.querySelector('#incomeAmount').textContent = money(earned);
+  const savingsBalance = earned - spent - sentHome;
+  document.querySelector('#savingsAmount').textContent = money(Math.max(0, savingsBalance));
+  document.querySelector('#savingsNote').textContent = earned ? (savingsBalance >= 0 ? `${money(savingsBalance)} left from income after outgoings` : `${money(Math.abs(savingsBalance))} more spent than income`) : 'Add income to calculate savings';
   document.querySelector('#transactionList').innerHTML = transactions.length ? transactions.map(t => `<div class="transaction"><div class="transaction-icon ${t.type}">${t.type === 'income' ? '↗' : '↘'}</div><div class="transaction-detail"><b>${escapeHtml(t.title)}</b><span>${escapeHtml(t.category)} · ${new Intl.DateTimeFormat('en-US', { month:'short', day:'numeric' }).format(new Date(`${t.transaction_date}T12:00:00`))}</span></div><strong class="${t.type}">${t.type === 'income' ? '+' : '−'}${money(t.amount)}</strong><button class="delete transaction-delete" data-transaction-delete="${t.id}" aria-label="Delete ${escapeHtml(t.title)}">×</button></div>`).join('') : '<div class="empty-state">No money records this month. Add income or an expense to begin.</div>';
   const categories = personalExpenses.reduce((result, t) => { result[t.category] = (result[t.category] || 0) + Number(t.amount); return result; }, {});
   const plans = Object.fromEntries(budgetPlans.map(plan => [plan.category, Number(plan.amount)]));
