@@ -13,8 +13,9 @@ let sendHomeBudget = 0;
 let budgetPlans = [];
 let jobApplications = [];
 let editingJobId = null;
-let activeView = localStorage.getItem('trackapp-active-view') || 'planner';
+let activeView = localStorage.getItem('trackapp-active-view') || 'today';
 let roadmaps = [], sections = [], topics = [], selectedRoadmapId = null;
+let plannerItems = [], editingPlannerItemId = null;
 let isSignIn = localStorage.getItem('dayflow-auth-mode') === 'signin';
 
 const today = new Date();
@@ -23,10 +24,26 @@ const todayKey = dateKey(today);
 const monthKey = date => dateKey(new Date(date.getFullYear(), date.getMonth(), 1)).slice(0, 7);
 let selectedDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 let calendarCursor = new Date(today.getFullYear(), today.getMonth(), 1);
+let plannerSelectedDate = dateKey(today);
+let plannerCalendarCursor = new Date(today.getFullYear(), today.getMonth(), 1);
 const weekStart = date => { const start = new Date(date); start.setDate(date.getDate() - ((date.getDay() + 6) % 7)); return start; };
 const weekEnd = date => { const end = weekStart(date); end.setDate(end.getDate() + 6); return end; };
 const escapeHtml = text => text.replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#039;','"':'&quot;'}[char]));
 const money = value => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value || 0));
+const localDateTimeValue = value => {
+  if (!value) return '';
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 16);
+};
+const localDateTimeISO = value => value ? new Date(value).toISOString() : null;
+const googleCalendarUrl = item => {
+  const start = new Date(item.scheduled_at);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const calendarDate = date => date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const details = `${item.notes || ''}${item.reminder_at ? '\n\nTrackApp will email a reminder 5 minutes before this event.' : ''}`.trim();
+  return `https://calendar.google.com/calendar/render?${new URLSearchParams({ action: 'TEMPLATE', text: item.title, details, dates: `${calendarDate(start)}/${calendarDate(end)}` })}`;
+};
 
 function setStatus(message = '', isError = false) {
   const status = document.querySelector('#authStatus');
@@ -142,6 +159,36 @@ async function loadRoadmaps() {
   } else { sections = []; topics = []; }
   renderRoadmaps();
 }
+async function loadPlanner() {
+  const { data, error } = await db.from('planner_items').select('*').order('scheduled_at').order('created_at');
+  if (error) return alert(`Couldn’t load your planner: ${error.message}`);
+  plannerItems = data || [];
+  renderPlanner();
+}
+function renderPlanner() {
+  const visible = plannerItems.filter(item => localDateTimeValue(item.scheduled_at).slice(0, 10) === plannerSelectedDate);
+  const completed = visible.filter(item => item.completed).length;
+  const upcoming = plannerItems.filter(item => !item.completed && new Date(item.scheduled_at) >= new Date()).sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at))[0];
+  document.querySelector('#plannerPlannedCount').textContent = visible.length;
+  document.querySelector('#plannerCompleteCount').textContent = completed;
+  document.querySelector('#plannerDateLabel').textContent = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${plannerSelectedDate}T12:00:00`));
+  document.querySelector('#plannerNextTime').textContent = upcoming ? new Intl.DateTimeFormat('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(upcoming.scheduled_at)) : '—';
+  document.querySelector('#plannerNextTitle').textContent = upcoming ? upcoming.title : 'Nothing scheduled yet';
+  document.querySelector('#plannerMonthLabel').textContent = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(plannerCalendarCursor);
+  const firstDay = (plannerCalendarCursor.getDay() + 6) % 7;
+  const daysInMonth = new Date(plannerCalendarCursor.getFullYear(), plannerCalendarCursor.getMonth() + 1, 0).getDate();
+  document.querySelector('#plannerCalendar').innerHTML = Array.from({ length: 42 }, (_, index) => {
+    const day = index - firstDay + 1;
+    if (day < 1 || day > daysInMonth) return '<div class="planner-day empty"></div>';
+    const key = dateKey(new Date(plannerCalendarCursor.getFullYear(), plannerCalendarCursor.getMonth(), day));
+    const dayItems = plannerItems.filter(item => localDateTimeValue(item.scheduled_at).slice(0, 10) === key);
+    return `<button class="planner-day ${key === plannerSelectedDate ? 'selected' : ''} ${key === todayKey ? 'today' : ''}" data-planner-date="${key}"><span class="planner-day-number">${day}</span>${dayItems.slice(0, 2).map(item => `<span class="planner-event ${item.completed ? 'done' : ''}" data-planner-edit="${item.id}">${escapeHtml(item.title)}</span>`).join('')}${dayItems.length > 2 ? `<span class="planner-more">+${dayItems.length - 2} more</span>` : ''}</button>`;
+  }).join('');
+  document.querySelector('#plannerList').innerHTML = visible.length ? visible.map(item => {
+    const scheduled = new Date(item.scheduled_at);
+    return `<div class="planner-item ${item.completed ? 'completed' : ''}"><button class="check" data-planner-check="${item.id}" aria-label="Mark ${escapeHtml(item.title)} complete">${item.completed ? '✓' : ''}</button><div class="planner-detail"><b>${escapeHtml(item.title)}</b><small>${new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(scheduled)}${item.notes ? ` · ${escapeHtml(item.notes)}` : ''}</small></div><span class="planner-reminder">Email reminder<br>5 min before</span><div class="planner-actions"><button class="planner-google" data-planner-google="${item.id}">Google Calendar</button><button class="job-edit" data-planner-edit="${item.id}">Edit</button><button class="delete" data-planner-delete="${item.id}" aria-label="Delete ${escapeHtml(item.title)}">×</button></div></div>`;
+  }).join('') : '<div class="empty-state">No plans here yet. Schedule your first focused block.</div>';
+}
 function renderRoadmaps() {
   document.querySelector('#roadmapList').innerHTML = roadmaps.length ? roadmaps.map(item => `<button class="roadmap-link ${item.id === selectedRoadmapId ? 'active' : ''}" data-roadmap="${item.id}">${escapeHtml(item.title)}</button>`).join('') : '<small class="empty-state">No roadmaps yet.</small>';
   const roadmap = roadmaps.find(item => item.id === selectedRoadmapId);
@@ -203,6 +250,7 @@ async function setUser(nextUser) {
   await loadBudget();
   await loadJobs();
   await loadRoadmaps();
+  await loadPlanner();
 }
 
 document.querySelector('#authSwitch').onclick = () => setAuthMode(!isSignIn);
@@ -286,14 +334,15 @@ list.addEventListener('focusout', async event => {
   task.note = note;
 });
 function showView(view) {
-  const views = { planner: '#plannerView', budget: '#budgetSection', jobs: '#jobsView', roadmaps: '#roadmapsView', settings: '#settingsView' };
-  if (!views[view]) view = 'planner';
+  const views = { today: '#todayView', planner: '#plannerView', budget: '#budgetSection', jobs: '#jobsView', roadmaps: '#roadmapsView', settings: '#settingsView' };
+  if (!views[view]) view = 'today';
   activeView = view;
   localStorage.setItem('trackapp-active-view', view);
   document.querySelectorAll('.app-view').forEach(element => element.classList.remove('active'));
   document.querySelector(views[view]).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
   if (view === 'budget' && user) loadBudget();
+  if (view === 'planner' && user) loadPlanner();
   if (view === 'jobs' && user) loadJobs();
   if (view === 'roadmaps' && user) loadRoadmaps();
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -303,6 +352,75 @@ document.querySelector('.avatar').onclick = () => showView('settings');
 document.querySelector('#signOutButton').onclick = async () => { if (confirm('Sign out of TrackApp?')) await db.auth.signOut(); };
 showView(activeView);
 document.querySelector('#refreshQuote').onclick = () => loadReflection(true);
+const plannerModal = document.querySelector('#plannerModal');
+const googleConnectButton = document.createElement('button');
+googleConnectButton.type = 'button'; googleConnectButton.className = 'section-add'; googleConnectButton.textContent = 'Connect Google Calendar';
+document.querySelector('#openPlannerItem').before(googleConnectButton);
+googleConnectButton.onclick = async () => {
+  const { data, error } = await db.functions.invoke('google-calendar', { body: { action: 'connect' } });
+  if (error || !data?.url) return alert(`Couldn’t start Google Calendar connection: ${error?.message || data?.error || 'Try again.'}`);
+  window.location.assign(data.url);
+};
+async function syncGoogleCalendar(plannerItemId, action = 'upsert') {
+  const { error } = await db.functions.invoke('google-calendar', { body: { action, plannerItemId } });
+  if (error) console.warn('Google Calendar sync skipped:', error.message);
+}
+function openPlannerForm(item = null) {
+  editingPlannerItemId = item?.id || null;
+  document.querySelector('#plannerForm').reset();
+  document.querySelector('#plannerModalTitle').innerHTML = item ? 'Fine-tune your<br>plan.' : 'Make space for<br>what matters.';
+  document.querySelector('#plannerSubmit').textContent = item ? 'Save changes ✦' : 'Schedule it ✦';
+  document.querySelector('#plannerScheduledAt').value = item ? localDateTimeValue(item.scheduled_at) : `${plannerSelectedDate}T09:00`;
+  if (item) {
+    document.querySelector('#plannerTitle').value = item.title;
+    document.querySelector('#plannerNotes').value = item.notes || '';
+  }
+  plannerModal.classList.add('show'); document.querySelector('#plannerTitle').focus();
+}
+document.querySelector('#openPlannerItem').onclick = () => openPlannerForm();
+document.querySelector('#closePlannerItem').onclick = () => plannerModal.classList.remove('show');
+plannerModal.addEventListener('click', event => { if (event.target === plannerModal) plannerModal.classList.remove('show'); });
+document.querySelector('#previousPlannerMonth').onclick = () => { plannerCalendarCursor.setMonth(plannerCalendarCursor.getMonth() - 1); renderPlanner(); };
+document.querySelector('#nextPlannerMonth').onclick = () => { plannerCalendarCursor.setMonth(plannerCalendarCursor.getMonth() + 1); renderPlanner(); };
+document.querySelector('#plannerCalendar').addEventListener('click', event => {
+  const editId = event.target.closest('[data-planner-edit]')?.dataset.plannerEdit;
+  if (editId) return openPlannerForm(plannerItems.find(item => item.id === editId));
+  const key = event.target.closest('[data-planner-date]')?.dataset.plannerDate;
+  if (!key) return;
+  plannerSelectedDate = key; renderPlanner();
+});
+document.querySelector('#plannerForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const scheduledAt = localDateTimeISO(document.querySelector('#plannerScheduledAt').value);
+  const reminderAt = new Date(new Date(scheduledAt).getTime() - 5 * 60 * 1000).toISOString();
+  const item = { user_id: user.id, title: document.querySelector('#plannerTitle').value.trim(), notes: document.querySelector('#plannerNotes').value.trim(), scheduled_at: scheduledAt, reminder_at: reminderAt, reminder_sent_at: null };
+  const result = editingPlannerItemId ? await db.from('planner_items').update(item).eq('id', editingPlannerItemId) : await db.from('planner_items').insert(item).select('id').single();
+  if (result.error) return alert(`Couldn’t save plan: ${result.error.message}`);
+  await syncGoogleCalendar(editingPlannerItemId || result.data?.id || '', 'upsert');
+  editingPlannerItemId = null; event.target.reset(); plannerModal.classList.remove('show'); await loadPlanner();
+});
+document.querySelector('#plannerList').addEventListener('click', async event => {
+  const googleId = event.target.dataset.plannerGoogle;
+  if (googleId) {
+    const item = plannerItems.find(entry => entry.id === googleId);
+    if (item) window.open(googleCalendarUrl(item), '_blank', 'noopener');
+    return;
+  }
+  const editId = event.target.dataset.plannerEdit;
+  if (editId) return openPlannerForm(plannerItems.find(item => item.id === editId));
+  const id = event.target.dataset.plannerCheck || event.target.dataset.plannerDelete;
+  if (!id) return;
+  if (event.target.dataset.plannerDelete) {
+    await syncGoogleCalendar(id, 'delete');
+    const { error } = await db.from('planner_items').delete().eq('id', id);
+    if (error) return alert(`Couldn’t delete plan: ${error.message}`);
+  } else {
+    const item = plannerItems.find(entry => entry.id === id);
+    const { error } = await db.from('planner_items').update({ completed: !item.completed }).eq('id', id);
+    if (error) return alert(`Couldn’t update plan: ${error.message}`);
+  }
+  await loadPlanner();
+});
 const transactionModal = document.querySelector('#transactionModal');
 const transactionCategories = {
   expense: ['Food & dining', 'Transport', 'Shopping', 'Bills & utilities', 'Health & wellness', 'Entertainment', 'Education', 'Money sent home', 'Other'],

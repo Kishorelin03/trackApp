@@ -122,3 +122,59 @@ alter table public.roadmap_topics enable row level security;
 create policy "Users manage their own roadmaps" on public.roadmaps for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy "Users manage sections in their roadmaps" on public.roadmap_sections for all to authenticated using (exists (select 1 from public.roadmaps r where r.id = roadmap_id and r.user_id = (select auth.uid()))) with check (exists (select 1 from public.roadmaps r where r.id = roadmap_id and r.user_id = (select auth.uid())));
 create policy "Users manage topics in their roadmaps" on public.roadmap_topics for all to authenticated using (exists (select 1 from public.roadmap_sections s join public.roadmaps r on r.id = s.roadmap_id where s.id = section_id and r.user_id = (select auth.uid()))) with check (exists (select 1 from public.roadmap_sections s join public.roadmaps r on r.id = s.roadmap_id where s.id = section_id and r.user_id = (select auth.uid())));
+
+-- Personal planner: run once in Supabase SQL Editor.
+create table if not exists public.planner_items (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  title text not null check (char_length(title) between 1 and 120),
+  notes text not null default '' check (char_length(notes) <= 1000),
+  scheduled_at timestamptz not null,
+  reminder_at timestamptz,
+  reminder_sent_at timestamptz,
+  completed boolean not null default false,
+  created_at timestamptz not null default now(),
+  check (reminder_at is null or reminder_at < scheduled_at)
+);
+create index if not exists planner_items_user_schedule_idx on public.planner_items (user_id, scheduled_at);
+create index if not exists planner_items_due_reminders_idx on public.planner_items (reminder_at) where reminder_at is not null and reminder_sent_at is null and completed = false;
+alter table public.planner_items enable row level security;
+drop policy if exists "Users manage their own planner items" on public.planner_items;
+create policy "Users manage their own planner items" on public.planner_items for all to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+
+-- Always send planner reminders five minutes before the scheduled start.
+create or replace function public.set_planner_reminder_time()
+returns trigger language plpgsql as $$
+begin
+  new.reminder_at := new.scheduled_at - interval '5 minutes';
+  if tg_op = 'INSERT' or new.scheduled_at is distinct from old.scheduled_at then
+    new.reminder_sent_at := null;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists planner_item_reminder_time on public.planner_items;
+create trigger planner_item_reminder_time
+before insert or update of scheduled_at on public.planner_items
+for each row execute function public.set_planner_reminder_time();
+update public.planner_items
+set reminder_at = scheduled_at - interval '5 minutes'
+where reminder_at is null;
+
+-- Google Calendar connection and event mapping. These tables have no client policies:
+-- only the secure Edge Functions (service role) can read refresh tokens.
+alter table public.planner_items add column if not exists google_event_id text;
+create table if not exists public.google_calendar_connections (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  refresh_token text not null,
+  calendar_id text not null default 'primary',
+  connected_at timestamptz not null default now()
+);
+create table if not exists public.google_oauth_states (
+  state uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+alter table public.google_calendar_connections enable row level security;
+alter table public.google_oauth_states enable row level security;
