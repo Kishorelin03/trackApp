@@ -60,18 +60,6 @@ function setAuthMode(signIn) {
   document.querySelector('#authSwitch').textContent = signIn ? 'New here? Create an account' : 'Already have an account? Sign in';
   setStatus();
 }
-function isInvalidSessionError(error) {
-  return /jwt issued at future|jwt expired|invalid jwt|invalid token/i.test(error?.message || '');
-}
-async function recoverInvalidSession(error) {
-  if (!isInvalidSessionError(error)) return false;
-  // Keep this local: a malformed access token can prevent a remote sign-out request.
-  await db.auth.signOut({ scope: 'local' });
-  user = null;
-  welcome.classList.remove('hidden');
-  setAuthMode(true);
-  return true;
-}
 function render() {
   const selectedKey = dateKey(selectedDate);
   const dailyTasks = weeklyTasks.filter(task => task.due_date === selectedKey);
@@ -126,7 +114,6 @@ function renderCalendar() {
 }
 async function loadTasks() {
   const { data, error } = await db.from('tasks').select('*').gte('due_date', dateKey(weekStart(selectedDate))).lte('due_date', dateKey(weekEnd(selectedDate))).order('due_date').order('created_at');
-  if (await recoverInvalidSession(error)) return;
   if (error) return alert(`Couldn’t load your tasks: ${error.message}`);
   weeklyTasks = data; render();
 }
